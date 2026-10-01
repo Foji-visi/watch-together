@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Смотрим вместе</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0e0e12; color:#eee; font-family:system-ui,-apple-system,sans-serif; min-height:100vh; display:flex; flex-direction:column; }
+  header { padding:12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:#17171d; }
+  input { flex:1; min-width:180px; padding:10px; border-radius:8px; border:1px solid #333; background:#0e0e12; color:#fff; font-size:16px; }
+  button { padding:10px 14px; border:0; border-radius:8px; background:#e5484d; color:#fff; font-size:15px; cursor:pointer; }
+  button.sec { background:#2a2a33; }
+  #wrap { flex:1; display:flex; align-items:center; justify-content:center; position:relative; background:#000; }
+  #stage { width:100%; aspect-ratio:16/9; max-height:calc(100vh - 110px); background:#000; position:relative; }
+  #stage video, #embed, #embed iframe { width:100%; height:100%; border:0; background:#000; }
+  #embed { display:none; }
+  #hint { display:none; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; padding:10px 12px; background:#3a2a10; color:#ffd89a; font-size:14px; text-align:center; }
+  #hint button { background:#f5a524; color:#111; }
+  #status { padding:8px 12px; font-size:13px; color:#9a9aa5; background:#17171d; }
+  #join { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.8); z-index:5; }
+  #join button { font-size:20px; padding:16px 28px; }
+</style>
+</head>
+<body>
+<header>
+  <input id="url" placeholder="Ссылка: файл (.mp4/.m3u8), YouTube или VK Видео">
+  <button id="load">Загрузить</button>
+  <button id="share" class="sec">Ссылка на комнату</button>
+  <button id="sync" class="sec">Синхронизировать</button>
+</header>
+<div id="hint"><span>Партнёр запустил просмотр. Нажми кнопку — и если видео не стартует, нажми ▶ прямо в плеере.</span><button id="hintBtn">▶ Смотреть вместе</button></div>
+<div id="wrap">
+  <div id="stage">
+    <video id="v" controls playsinline preload="auto"></video>
+    <div id="embed"></div>
+  </div>
+  <div id="join"><button id="joinBtn">▶ Присоединиться</button></div>
+</div>
+<div id="status">Подключение…</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const v = $('v'), embed = $('embed'), statusEl = $('status');
+
+let room = location.hash.slice(1);
+if (!room) { room = Math.random().toString(36).slice(2, 8); location.hash = room; }
+
+let ws, lock = false, lockTimer, controller = false, peers = 1, api = null, hls = null, pollTimer = null;
+let note = '';
+
+function setStatus(t) { statusEl.textContent = t + ' • комната: ' + room + ' • зрителей: ' + peers + note; }
+function remote(fn) { lock = true; clearTimeout(lockTimer); try { fn(); } catch (e) {} lockTimer = setTimeout(() => lock = false, 1000); }
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+const hint = $('hint');
+let hintTimer, lastRemote = { time: 0, wall: 0 };
+function checkPlay() {
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hint.style.display = (api && !api.playing()) ? 'flex' : 'none'; }, 1500);
+}
+$('hintBtn').onclick = () => {
+  hint.style.display = 'none';
+  if (!api) return;
+  api.seek(lastRemote.time + (Date.now() - lastRemote.wall) / 1000);
+  api.play();
+};
+function local(type, t) { hint.style.display = 'none'; if (lock) return; controller = true; send({ type, time: t }); }
+
+function loadScript(src, ok) {
+  const s = document.createElement('script');
+  s.src = src; s.onload = ok; s.onerror = () => setStatus('Не удалось загрузить скрипт плеера');
+  document.head.appendChild(s);
+}
+
+/* Определяем тип ссылки */
+function parseLink(u) {
+  let m;
+  if ((m = u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/))) return { kind: 'yt', id: m[1] };
+  const hash = (u.match(/[?&]hash=(\w+)/) || [])[1] || '';
+  if ((m = u.match(/(?:vk\.com|vkvideo\.ru)\/(?:video|clip)(-?\d+)_(\d+)/))) return { kind: 'vk', oid: m[1], id: m[2], hash };
+  if (/video_ext\.php/.test(u)) {
+    const o = u.match(/oid=(-?\d+)/), i = u.match(/[?&]id=(\d+)/);
+    if (o && i) return { kind: 'vk', oid: o[1], id: i[1], hash };
+  }
+  return { kind: 'file', url: u };
+}
+
+/* Опрос времени для плееров без события «перемотка» (YouTube, VK) */
+function startPoll(getTime, isPlaying) {
+  let lastT = 0, lastWall = Date.now(), was = false;
+  pollTimer = setInterval(() => {
+    const now = Date.now(), t = getTime(), pl = isPlaying();
+    const expected = was ? lastT + (now - lastWall) / 1000 : lastT;
+    if (!lock && Math.abs(t - expected) > 1.5) local('seek', t);
+    lastT = t; lastWall = now; was = pl;
+  }, 500);
+}
+
+function clearStage() {
+  if (api && api.destroy) { try { api.destroy(); } catch (e) {} }
+  api = null;
+  clearInterval(pollTimer);
+  if (hls) { hls.destroy(); hls = null; }
+  v.pause(); v.removeAttribute('src'); v.load();
+  embed.innerHTML = '';
+  embed.style.display = 'none';
+  v.style.display = '';
+  note = '';
+}
+
+/* ---- обычный файл / HLS ---- */
+function mountFile(url, ready) {
+  if (/\.m3u8(\?|$)/i.test(url) && !v.canPlayType('application/vnd.apple.mpegurl') && window.Hls && Hls.isSupported()) {
+    hls = new Hls(); hls.loadSource(url); hls.attachMedia(v);
+  } else v.src = url;
+  api = {
+    kind: 'file',
+    play: () => v.play().catch(() => {}),
+    pause: () => v.pause(),
+    seek: t => { v.currentTime = t; },
+    time: () => v.currentTime,
+    playing: () => !v.paused
+  };
+  v.addEventListener('loadedmetadata', () => ready && ready(), { once: true });
+}
+
+/* ---- YouTube ---- */
+function withYT(cb) {
+  if (window.YT && YT.Player) return cb();
+  const prev = window.onYouTubeIframeAPIReady;
+  window.onYouTubeIframeAPIReady = () => { prev && prev(); cb(); };
+  if (!document.getElementById('ytapi')) {
+    const s = document.createElement('script'); s.id = 'ytapi'; s.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(s);
+  }
+}
+function mountYT(id, ready) {
+  v.style.display = 'none'; embed.style.display = 'block';
+  embed.innerHTML = '<div id="ytbox"></div>';
+  note = ' • YouTube';
+  withYT(() => {
+    const p = new YT.Player('ytbox', {
+      width: '100%', height: '100%', videoId: id, playerVars: { playsinline: 1, rel: 0 },
+      events: {
+        onReady: () => {
+          api = {
+            kind: 'yt',
+            play: () => p.playVideo(), pause: () => p.pauseVideo(),
+            seek: t => p.seekTo(t, true),
+            time: () => p.getCurrentTime() || 0,
+            playing: () => p.getPlayerState() === 1,
+            destroy: () => p.destroy()
+          };
+          startPoll(api.time, api.playing);
+          ready && ready();
+        },
+        onStateChange: e => {
+          if (e.data === 1) local('play', p.getCurrentTime());
+          else if (e.data === 2) local('pause', p.getCurrentTime());
+        }
+      }
+    });
+  });
+}
+
+/* ---- VK Видео (официальный встраиваемый плеер) ---- */
+function mountVK(info, ready) {
+  v.style.display = 'none'; embed.style.display = 'block';
+  note = ' • VK Видео';
+  const f = document.createElement('iframe');
+  f.src = 'https://vk.com/video_ext.php?oid=' + info.oid + '&id=' + info.id + (info.hash ? '&hash=' + info.hash : '') + '&hd=2';
+  f.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+  f.allowFullscreen = true;
+  embed.appendChild(f);
+  loadScript('https://vk.com/js/api/videoplayer.js', () => {
+    const p = VK.VideoPlayer(f);
+    let t = 0, playing = false;
+    const num = d => typeof d === 'number' ? d : (d && typeof d.time === 'number' ? d.time : null);
+    p.on('timeupdate', d => { const n = num(d); if (n !== null) t = n; });
+    p.on('started', () => { playing = true; local('play', t); });
+    p.on('resumed', () => { playing = true; local('play', t); });
+    p.on('paused',  () => { playing = false; local('pause', t); });
+    api = {
+      kind: 'vk',
+      play: () => p.play(), pause: () => p.pause(), seek: s => p.seek(s),
+      time: () => t, playing: () => playing
+    };
+    startPoll(api.time, api.playing);
+    setTimeout(() => ready && ready(), 1500);
+  });
+}
+
+function setSource(url, ready) {
+  if (!url) return;
+  $('url').value = url;
+  clearStage();
+  const info = parseLink(url);
+  if (info.kind === 'yt') mountYT(info.id, ready);
+  else if (info.kind === 'vk') mountVK(info, ready);
+  else mountFile(info.url, ready);
+}
+
+/* события обычного видео */
+v.addEventListener('play',   () => { if (api && api.kind === 'file') local('play',  v.currentTime); });
+v.addEventListener('pause',  () => { if (api && api.kind === 'file') local('pause', v.currentTime); });
+v.addEventListener('seeked', () => { if (api && api.kind === 'file') local('seek',  v.currentTime); });
+v.addEventListener('error',  () => { if (api && api.kind === 'file') setStatus('Не удалось открыть видео (нужна прямая ссылка на файл)'); });
+
+setInterval(() => { if (controller && api && api.playing()) send({ type: 'tick', time: api.time() }); }, 3000);
+
+function connect() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+  ws.onopen = () => { send({ type: 'join', room }); setStatus('Онлайн'); };
+  ws.onclose = () => { setStatus('Соединение потеряно, переподключаюсь…'); setTimeout(connect, 2000); };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'peers') { peers = m.peers; setStatus('Онлайн'); return; }
+    if (m.type === 'state') {
+      peers = m.peers;
+      if (m.url) setSource(m.url, () => { remote(() => { api.seek(m.time); if (m.playing) api.play(); }); if (m.playing) { lastRemote = { time: m.time, wall: Date.now() }; checkPlay(); } });
+      setStatus('Онлайн'); return;
+    }
+    if (m.type === 'load') { setSource(m.url); setStatus('Онлайн'); return; }
+    if (!api) return;
+    if (m.type === 'play') { lastRemote = { time: m.time, wall: Date.now() }; remote(() => { api.seek(m.time); api.play(); }); checkPlay(); }
+    else if (m.type === 'pause') { hint.style.display = 'none'; remote(() => { api.pause(); api.seek(m.time); }); }
+    else if (m.type === 'seek')  remote(() => api.seek(m.time));
+    else if (m.type === 'tick' && Math.abs(api.time() - m.time) > 1.5) remote(() => api.seek(m.time));
+  };
+}
+
+$('load').onclick = () => {
+  const url = $('url').value.trim();
+  if (!url) return;
+  setSource(url); send({ type: 'load', url }); setStatus('Онлайн');
+};
+$('share').onclick = async () => {
+  try { await navigator.clipboard.writeText(location.href); $('share').textContent = 'Скопировано ✓'; }
+  catch { prompt('Скопируй ссылку:', location.href); }
+  setTimeout(() => $('share').textContent = 'Ссылка на комнату', 1500);
+};
+$('sync').onclick = () => { if (api) send({ type: 'seek', time: api.time() }); };
+
+$('joinBtn').onclick = () => {
+  $('join').remove();
+  v.muted = false;
+  v.play().then(() => v.pause()).catch(() => {});
+  connect();
+};
+</script>
+</body>
+</html>
