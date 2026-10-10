@@ -1,0 +1,1089 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1D2144">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Вдвоём">
+<title>Вдвоём</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<style>
+  :root {
+    --night: #1D2144;
+    --dusk: #272C58;
+    --dusk-2: #353B70;
+    --screen: #121430;
+    --lamp: #F3C56B;
+    --rose: #EE9AAE;
+    --ink: #F1EDF8;
+    --muted: #A5A8CE;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--night);
+    color: var(--ink);
+    font: 16px/1.5 Manrope, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  }
+  button, input, select { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  :focus-visible { outline: 2px solid var(--lamp); outline-offset: 2px; }
+
+  .bar { display: flex; align-items: center; gap: 16px; padding: 14px 20px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-family: Unbounded, Manrope, sans-serif; font-weight: 700; font-size: 20px; }
+  .logo svg { width: 36px; height: 22px; }
+  .peers { display: flex; align-items: center; gap: 10px; margin-left: auto; color: var(--muted); font-size: 14px; }
+  .avatars { display: flex; padding-left: 8px; }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 50%; margin-left: -8px;
+    display: grid; place-items: center;
+    background: var(--rose); color: var(--night);
+    font-weight: 700; font-size: 13px; border: 2px solid var(--night);
+  }
+  .avatar.me { background: var(--lamp); }
+  .ghost { background: none; border: 1px solid var(--dusk-2); border-radius: 999px; padding: 6px 14px; font-weight: 600; }
+  .ghost:hover { border-color: var(--lamp); }
+
+  .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; padding: 0 20px 20px; }
+  .stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .screen { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: calc(100dvh - 200px); background: var(--screen); border-radius: 18px; overflow: hidden; }
+  .screen video, #ext, #ext iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--screen); }
+  .screen video { object-fit: contain; }
+  .empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; padding: 24px; text-align: center; color: var(--muted); }
+  .empty-title { margin: 0; font-family: Unbounded, Manrope, sans-serif; font-weight: 500; font-size: clamp(18px, 3vw, 26px); color: var(--ink); }
+  .empty p { margin: 0; }
+  .tap {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: var(--lamp); color: var(--night); border: 0; border-radius: 999px;
+    padding: 14px 24px; font-weight: 700; box-shadow: 0 0 0 10px rgba(243, 197, 107, .18);
+  }
+
+  .loader { display: flex; gap: 8px; }
+  .field { flex: 1; min-width: 0; background: var(--dusk); border: 1px solid var(--dusk-2); border-radius: 12px; padding: 11px 14px; }
+  .field::placeholder { color: var(--muted); }
+  .field:focus { outline: 2px solid var(--lamp); outline-offset: 0; border-color: transparent; }
+  .primary { background: var(--lamp); color: var(--night); border: 0; border-radius: 12px; padding: 0 18px; font-weight: 700; white-space: nowrap; }
+  .local { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+  .local select { background: var(--dusk); border: 1px solid var(--dusk-2); border-radius: 10px; padding: 6px 10px; max-width: 100%; }
+  .notice { margin: 0; color: var(--rose); font-size: 14px; }
+
+  .chat { display: flex; flex-direction: column; min-height: 0; background: var(--dusk); border-radius: 18px; overflow: hidden; }
+  .messages { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 85%; align-self: flex-start; }
+  .msg .who { font-size: 12px; font-weight: 600; color: var(--rose); margin: 0 0 2px 4px; }
+  .msg .bubble { background: var(--dusk-2); padding: 8px 12px; border-radius: 16px 16px 16px 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .msg time { display: block; font-size: 11px; color: var(--muted); margin: 2px 4px 0; }
+  .msg.mine { align-self: flex-end; text-align: right; }
+  .msg.mine .who { display: none; }
+  .msg.mine .bubble { background: var(--lamp); color: var(--night); text-align: left; border-radius: 16px 16px 4px 16px; }
+  .sys { align-self: center; text-align: center; font-size: 13px; color: var(--muted); max-width: 90%; }
+  .msg { position: relative; transition: transform .18s ease; }
+  .msg.dragging { transition: none; }
+  .msg .quote {
+    display: block; margin: 0 0 6px; padding: 4px 8px; border-left: 3px solid var(--rose);
+    border-radius: 6px; background: rgba(255, 255, 255, .08); font-size: 13px; line-height: 1.35;
+    cursor: pointer; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .msg .quote b { display: block; font-weight: 700; color: var(--rose); }
+  .msg.mine .quote { background: rgba(29, 33, 68, .12); border-left-color: var(--night); }
+  .msg.mine .quote b { color: var(--night); }
+  .reply-btn {
+    position: absolute; top: 50%; transform: translateY(-50%); right: -36px;
+    width: 28px; height: 28px; border-radius: 50%; border: 0; padding: 0;
+    background: var(--dusk-2); color: var(--ink); font-size: 15px; line-height: 28px;
+    opacity: 0; transition: opacity .15s;
+  }
+  .msg.mine .reply-btn { right: auto; left: -36px; }
+  @media (hover: hover) { .msg:hover .reply-btn, .reply-btn:focus-visible { opacity: 1; } }
+  .swipe-hint {
+    position: absolute; top: 50%; right: -34px; transform: translateY(-50%) scale(.6);
+    font-size: 18px; color: var(--lamp); opacity: 0; pointer-events: none;
+  }
+  .msg.flash .bubble { animation: flash 1.2s ease; }
+  @keyframes flash { 0%, 40% { box-shadow: 0 0 0 3px var(--lamp); } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .messages { touch-action: pan-y; overflow-x: hidden; }
+  .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 2px 0; }
+  .msg.mine .reactions { justify-content: flex-end; }
+  .react-chip {
+    display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+    background: var(--dusk-2); border: 1px solid transparent; font-size: 14px; line-height: 1.4;
+  }
+  .react-chip.mine { border-color: var(--lamp); background: rgba(243, 197, 107, .18); }
+  .react-chip small { font-size: 12px; font-weight: 700; color: var(--ink); }
+  @media (pointer: coarse) { .msg { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; } }
+  .msg.pressed .bubble { transform: scale(.97); transition: transform .15s; }
+  .menu-backdrop { position: fixed; inset: 0; z-index: 15; background: rgba(18, 20, 48, .45); }
+  .msg-menu {
+    position: fixed; z-index: 16; background: var(--dusk); border: 1px solid var(--dusk-2); border-radius: 18px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .4); padding: 8px; width: max-content; max-width: calc(100vw - 24px);
+    animation: pop .14s ease-out;
+  }
+  @keyframes pop { from { transform: scale(.92); opacity: 0; } }
+  .menu-emoji { display: flex; gap: 2px; padding-bottom: 6px; border-bottom: 1px solid var(--dusk-2); }
+  .menu-emoji button { background: none; border: 0; border-radius: 12px; font-size: 24px; line-height: 1; padding: 6px; }
+  .menu-emoji button:hover, .menu-emoji button.on { background: var(--dusk-2); }
+  .menu-actions { display: flex; flex-direction: column; padding-top: 4px; }
+  .menu-actions button { background: none; border: 0; text-align: left; padding: 8px 10px; border-radius: 10px; font-weight: 600; }
+  .menu-actions button:hover { background: var(--dusk-2); }
+  .replybar { display: flex; align-items: center; gap: 10px; padding: 8px 12px 0; }
+  .replybar-text { flex: 1; min-width: 0; border-left: 3px solid var(--lamp); padding-left: 8px; font-size: 13px; line-height: 1.35; }
+  .replybar-text b { display: block; color: var(--lamp); }
+  .replybar-text span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+  .replybar button { background: none; border: 0; color: var(--muted); font-size: 22px; line-height: 1; padding: 4px 6px; }
+  .composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--dusk-2); padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+  .toast {
+    position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+    background: var(--ink); color: var(--night); padding: 8px 16px; border-radius: 999px;
+    font-weight: 600; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 20;
+  }
+  .toast.show { opacity: 1; }
+
+  .modal { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; padding: 20px; background: rgba(18, 20, 48, .88); }
+  .modal-card { width: min(380px, 100%); background: var(--dusk); border-radius: 22px; padding: 28px; display: flex; flex-direction: column; gap: 12px; }
+  .modal-card svg { width: 54px; height: 34px; }
+  .modal-card h1 { margin: 0; font-family: Unbounded, Manrope, sans-serif; font-weight: 500; font-size: 22px; }
+  .modal-card p { margin: 0; color: var(--muted); }
+  .modal-card .primary { padding: 12px 18px; }
+
+  @media (max-width: 820px) {
+    .bar { padding: 10px 14px; }
+    .logo span { font-size: 17px; }
+    .layout { display: flex; flex-direction: column; gap: 10px; padding: 0; }
+    .screen { border-radius: 0; max-height: none; }
+    .stage { gap: 8px; }
+    .loader, .local, .notice { padding: 0 12px; }
+    .chat { flex: 1; border-radius: 20px 20px 0 0; }
+  }
+
+  /* ---------- Кнопки поверх экрана ---------- */
+  .screen-tools { position: absolute; top: 10px; right: 10px; z-index: 3; display: flex; gap: 8px; }
+  .tool {
+    position: relative; width: 40px; height: 40px; border-radius: 12px; border: 0; padding: 0;
+    display: grid; place-items: center;
+    background: rgba(18, 20, 48, .62); color: #fff; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .tool svg { width: 20px; height: 20px; }
+  .tool:hover { background: rgba(18, 20, 48, .85); }
+  .badge {
+    position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: var(--rose); color: var(--night); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+  }
+  .only-theater { display: none; }
+  body.theater .only-theater { display: grid; }
+
+  /* ---------- Режим «на весь экран» с чатом ---------- */
+  body.theater { overflow: hidden; background: #000; }
+  body.theater .bar, body.theater .loader, body.theater .local, body.theater .notice { display: none !important; }
+  body.theater .screen {
+    position: fixed; inset: 0; z-index: 5; width: auto; aspect-ratio: auto; max-height: none;
+    border-radius: 0; background: #000; transition: right .22s ease, bottom .22s ease;
+  }
+  body.theater .screen video, body.theater #ext, body.theater #ext iframe { background: #000; }
+  body.theater .chat {
+    position: fixed; z-index: 6; top: 0; right: 0; bottom: 0; width: 340px; border-radius: 0;
+    background: rgba(29, 33, 68, .97); border-left: 1px solid var(--dusk-2);
+    transform: translateX(100%); transition: transform .22s ease; visibility: hidden;
+    padding-top: env(safe-area-inset-top, 0px); padding-right: env(safe-area-inset-right, 0px);
+  }
+  body.theater.chat-open .chat { transform: none; visibility: visible; }
+  body.theater.chat-open .screen { right: 340px; }
+  body.theater .screen-tools { top: calc(10px + env(safe-area-inset-top, 0px)); right: calc(10px + env(safe-area-inset-right, 0px)); }
+  .chat-head { display: none; }
+  body.theater .chat-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px 10px 16px; border-bottom: 1px solid var(--dusk-2); font-weight: 700;
+  }
+  .chat-head button { background: none; border: 0; color: var(--muted); font-size: 24px; line-height: 1; padding: 2px 8px; }
+
+  /* Телефон боком: чат справа, поуже */
+  @media (max-width: 920px) and (orientation: landscape) {
+    body.theater .chat { width: min(300px, 42vw); }
+    body.theater.chat-open .screen { right: min(300px, 42vw); }
+    body.theater .messages { padding: 10px; gap: 6px; }
+    body.theater .composer { padding: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+  }
+  /* Телефон вертикально: чат снизу */
+  @media (orientation: portrait) {
+    body.theater .chat {
+      top: auto; left: 0; width: auto; height: 50dvh; border-left: 0; border-top: 1px solid var(--dusk-2);
+      border-radius: 18px 18px 0 0; transform: translateY(100%);
+    }
+    body.theater.chat-open .screen { right: 0; bottom: 50dvh; }
+  }
+  @media (prefers-reduced-motion: reduce) { .toast, body.theater .chat, body.theater .screen { transition: none; } }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="logo">
+    <svg viewBox="0 0 36 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#F3C56B"/><circle cx="25" cy="11" r="10" fill="#EE9AAE" opacity=".9"/></svg>
+    <span>Вдвоём</span>
+  </div>
+  <div class="peers"><div class="avatars" id="avatars"></div><span id="peersText"></span></div>
+  <button class="ghost" id="shareBtn" type="button">Пригласить</button>
+</header>
+
+<main class="layout">
+  <section class="stage">
+    <div class="screen">
+      <video id="video" playsinline webkit-playsinline controls controlslist="nofullscreen" preload="auto" hidden></video>
+      <div id="ext" hidden></div>
+      <div class="screen-tools">
+        <button class="tool only-theater" id="chatToggle" type="button" aria-label="Чат" title="Чат">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
+          <span class="badge" id="unread" hidden></span>
+        </button>
+        <button class="tool" id="theaterBtn" type="button" aria-label="Во весь экран" title="Во весь экран с чатом">
+          <svg id="icoEnter" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+          <svg id="icoExit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+        </button>
+      </div>
+      <div class="empty" id="empty">
+        <p class="empty-title">Здесь появится фильм</p>
+        <p>Вставь ссылку ниже — видео включится у вас обоих.</p>
+      </div>
+      <button class="tap" id="tapToJoin" type="button" hidden>Подключиться к просмотру</button>
+    </div>
+
+    <form class="loader" id="loadForm" autocomplete="off">
+      <input class="field" id="linkInput" inputmode="url" placeholder="Ссылка: YouTube, Rutube, VK Видео, .mp4" aria-label="Ссылка на видео">
+      <button class="primary" type="submit">Включить</button>
+    </form>
+    <div class="local" id="localWrap" hidden>
+      <label for="localSelect">С ноутбука:</label>
+      <select id="localSelect"><option value="">выбрать файл</option></select>
+    </div>
+    <p class="notice" id="notice" role="status" hidden></p>
+  </section>
+
+  <aside class="chat" aria-label="Чат">
+    <div class="chat-head"><span>Чат</span><button type="button" id="chatClose" aria-label="Скрыть чат">×</button></div>
+    <div class="messages" id="messages" aria-live="polite"></div>
+    <div class="replybar" id="replyBar" hidden>
+      <div class="replybar-text"><b id="replyName"></b><span id="replyText"></span></div>
+      <button type="button" id="replyCancel" aria-label="Отменить ответ">×</button>
+    </div>
+    <form class="composer" id="chatForm" autocomplete="off">
+      <input class="field" id="chatInput" maxlength="500" placeholder="Сообщение" aria-label="Сообщение">
+      <button class="primary" type="submit">Отправить</button>
+    </form>
+  </aside>
+</main>
+
+<div class="modal" id="nameModal" hidden>
+  <form class="modal-card" id="nameForm">
+    <svg viewBox="0 0 36 22" aria-hidden="true"><circle cx="11" cy="11" r="10" fill="#F3C56B"/><circle cx="25" cy="11" r="10" fill="#EE9AAE" opacity=".9"/></svg>
+    <h1>Как тебя зовут?</h1>
+    <p>Имя увидит тот, с кем ты смотришь.</p>
+    <input class="field" id="nameInput" maxlength="24" required aria-label="Имя">
+    <button class="primary" type="submit">Войти в комнату</button>
+  </form>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('video'), extBox = $('ext'), emptyEl = $('empty'), tapBtn = $('tapToJoin'), noticeEl = $('notice');
+  const loadForm = $('loadForm'), linkInput = $('linkInput'), localWrap = $('localWrap'), localSelect = $('localSelect');
+  const messagesEl = $('messages'), chatForm = $('chatForm'), chatInput = $('chatInput');
+  const avatarsEl = $('avatars'), peersText = $('peersText'), shareBtn = $('shareBtn'), toastEl = $('toast');
+  const nameModal = $('nameModal'), nameForm = $('nameForm'), nameInput = $('nameInput');
+
+  const BAD_LINK = 'Видео не открылось. Скорее всего, это ссылка на страницу сайта, а не на сам видеофайл. Нужна прямая ссылка на .mp4 или .m3u8 — как её найти, написано в README.';
+
+  const store = {
+    get: k => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }
+  };
+
+  // ---------- Кто я и в какой комнате ----------
+  let clientId = store.get('vdvoem-id');
+  if (!clientId) { clientId = Math.random().toString(36).slice(2) + Date.now().toString(36); store.set('vdvoem-id', clientId); }
+
+  const params = new URLSearchParams(location.search);
+  let roomId = (params.get('room') || '').replace(/[^\w-]/g, '');
+  if (!roomId) {
+    roomId = Math.random().toString(36).slice(2, 8);
+    params.set('room', roomId);
+    history.replaceState(null, '', location.pathname + '?' + params);
+  }
+
+  const socket = io({ autoConnect: false });
+  let myName = '';
+
+  // ---------- Общее состояние и часы ----------
+  // state.time — позиция в секундах на момент state.updatedAt (время сервера)
+  let state = { media: null, playing: false, time: 0, updatedAt: 0 };
+  let offset = 0, clockMeasured = false;
+  const serverNow = () => Date.now() + offset;
+  const expected = () => state.playing ? state.time + (serverNow() - state.updatedAt) / 1000 : state.time;
+
+  function syncClock() {
+    let best = Infinity, n = 0;
+    const once = () => {
+      const t0 = Date.now();
+      socket.emit('ping-time', st => {
+        const t1 = Date.now();
+        if (t1 - t0 < best) { best = t1 - t0; offset = st - (t0 + t1) / 2; clockMeasured = true; }
+        if (++n < 5) setTimeout(once, 200);
+      });
+    };
+    once();
+  }
+  setInterval(() => socket.connected && syncClock(), 60000);
+
+  // ---------- Плеер: единый интерфейс для <video> и встроенных плееров ----------
+  // kind: 'html' — свой <video> (mp4, m3u8, файлы с ноутбука)
+  //       'ext'  — чужой плеер в iframe (YouTube, Rutube, VK), управляется через адаптер ext
+  let current = '', kind = null, hls = null, ext = null, extReady = false, htmlReady = false;
+  let progPlayAt = 0, lastPoll = null;
+  // iPhone не даёт странице самой запускать встроенные плееры — нужно нажатие на этом устройстве
+  const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  let ownLoad = { key: '', at: 0 }, gatedMedia = null;
+
+  const P = {
+    time() { return kind === 'html' ? video.currentTime || 0 : ext ? ext.time() : 0; },
+    paused() { return kind === 'html' ? video.paused : ext ? ext.paused() : true; },
+    play() {
+      if (kind === 'html') return video.play();
+      if (ext) ext.play();
+      return Promise.resolve();
+    },
+    pause() { kind === 'html' ? video.pause() : ext && ext.pause(); },
+    seek(t) { kind === 'html' ? (video.currentTime = t) : ext && ext.seek(t); },
+    rate(r) { if (kind === 'html' && video.playbackRate !== r) video.playbackRate = r; }
+  };
+  const ready = () => (kind === 'html' && htmlReady) || (kind === 'ext' && !!ext && extReady);
+  const busy = () => kind === 'ext' && ext && ext.busy && ext.busy(); // например, идёт реклама
+  const mediaKey = m => m ? m.type + ':' + (m.id || m.src || (m.oid + '_' + m.vid)) : '';
+
+  const LOAD_FAIL = {
+    yt: 'Плеер YouTube не загрузился. Проверь, открывается ли youtube.com в этом браузере. Если только через VPN — VPN нужен вам обоим.',
+    rutube: 'Плеер Rutube не загрузился. Проверь, открывается ли rutube.ru в этом браузере.',
+    vk: 'Плеер VK Видео не загрузился. Проверь, открывается ли vk.com в этом браузере.'
+  };
+
+  function teardown() {
+    htmlReady = false; extReady = false; lastPoll = null;
+    if (hls) { hls.destroy(); hls = null; }
+    video.pause(); video.removeAttribute('src'); video.load(); video.playbackRate = 1;
+    if (ext) { try { ext.destroy(); } catch {} ext = null; }
+    extBox.textContent = '';
+    gatedMedia = null;
+    hideTap();
+  }
+
+  function loadMedia(m) {
+    teardown();
+    hideNotice();
+    current = mediaKey(m);
+    if (!m) { kind = null; video.hidden = true; extBox.hidden = true; emptyEl.hidden = false; return; }
+    emptyEl.hidden = true;
+
+    if (MAKERS[m.type]) {
+      kind = 'ext'; video.hidden = true; extBox.hidden = false;
+      const ownRecent = ownLoad.key === current && Date.now() - ownLoad.at < 8000;
+      if (IS_IOS && !ownRecent) {
+        gatedMedia = m; // видео включил другой человек — ждём нажатия на этом iPhone
+        showTap('▶ Открыть видео');
+        return;
+      }
+      startExt(m);
+      return;
+    }
+
+    kind = 'html'; extBox.hidden = true; video.hidden = false;
+    if (m.type === 'hls' && !video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (window.Hls && Hls.isSupported()) startHls(m.src, false);
+      else showNotice('Этот браузер не умеет играть .m3u8.');
+    } else {
+      video.src = m.src; // iPhone играет .m3u8 сам, .mp4 — все браузеры
+    }
+  }
+
+  const MAKERS = { yt: (...a) => createYT(...a), rutube: (...a) => createRutube(...a), vk: (...a) => createVK(...a) };
+
+  function startExt(m) {
+    const key = current, h = hooks(key);
+    showNotice('Загружаю плеер…');
+    Promise.resolve()
+      .then(() => MAKERS[m.type](m, h, key))
+      .then(adapter => {
+        if (!adapter) return;
+        if (key !== current) { adapter.destroy(); return; }
+        ext = adapter;
+        syncNow();
+      })
+      .catch(() => { if (key === current) showNotice(LOAD_FAIL[m.type]); });
+  }
+
+  function startHls(src, viaProxy) {
+    hls = new Hls();
+    hls.loadSource(viaProxy ? '/proxy?url=' + encodeURIComponent(src) : src);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.ERROR, (e, d) => {
+      if (!d.fatal) return;
+      if (!viaProxy && d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        hls.destroy(); hls = null;
+        startHls(src, true); // сайт не пустил напрямую — пробуем через ноутбук
+      } else {
+        showNotice(BAD_LINK);
+      }
+    });
+  }
+
+  // Что делать, когда встроенный плеер что-то сообщает
+  function hooks(key) {
+    return {
+      onReady() { if (key !== current) return; extReady = true; hideNotice(); syncNow(); },
+      onPlay() { if (key !== current) return; hideTap(); hideNotice(); localAction('play'); },
+      onPause() { if (key === current && Date.now() - progPlayAt > 1500) localAction('pause'); },
+      onEnded() { if (key === current) localAction('pause'); },
+      onError(msg) { if (key === current) showNotice(msg); }
+    };
+  }
+
+  const scripts = {};
+  function loadScript(src, isLoaded, readyHook) {
+    if (!scripts[src]) {
+      scripts[src] = new Promise((resolve, reject) => {
+        if (isLoaded()) return resolve();
+        if (readyHook) window[readyHook] = resolve;
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = () => { if (!readyHook) resolve(); };
+        s.onerror = reject;
+        document.head.appendChild(s);
+        setTimeout(reject, 10000);
+      }).catch(err => { delete scripts[src]; throw err; });
+    }
+    return scripts[src];
+  }
+
+  function makeIframe(src) {
+    const f = document.createElement('iframe');
+    f.src = src;
+    f.allow = 'autoplay; encrypted-media; picture-in-picture; clipboard-write'; // без своего полного экрана — у нас свой, с чатом
+    extBox.appendChild(f);
+    return f;
+  }
+
+  // ----- YouTube -----
+  async function createYT(m, h, key) {
+    await loadScript('https://www.youtube.com/iframe_api', () => window.YT && YT.Player, 'onYouTubeIframeAPIReady');
+    if (key !== current) return null;
+    const holder = document.createElement('div');
+    extBox.appendChild(holder);
+    const p = new YT.Player(holder, {
+      videoId: m.id, width: '100%', height: '100%',
+      playerVars: { playsinline: 1, rel: 0, modestbranding: 1, fs: 0 },
+      events: {
+        onReady: h.onReady,
+        onStateChange: e => { if (e.data === 1) h.onPlay(); else if (e.data === 2) h.onPause(); else if (e.data === 0) h.onEnded(); },
+        onError: () => h.onError('YouTube не дал включить это видео: возможно, автор запретил показ на других сайтах.')
+      }
+    });
+    return {
+      time: () => (p.getCurrentTime && p.getCurrentTime()) || 0,
+      paused: () => { const s = p.getPlayerState ? p.getPlayerState() : -1; return !(s === 1 || s === 3); },
+      play: () => p.playVideo(),
+      pause: () => p.pauseVideo(),
+      seek: t => p.seekTo(t, true),
+      destroy: () => { try { p.destroy(); } catch {} }
+    };
+  }
+
+  // ----- Rutube (управление через postMessage) -----
+  function createRutube(m, h) {
+    const iframe = makeIframe('https://rutube.ru/play/embed/' + m.id + '/' + (m.p ? '?p=' + encodeURIComponent(m.p) : ''));
+    let t = 0, tAt = performance.now(), playing = false, inAd = false, isReady = false;
+    const send = (type, data = {}) => {
+      if (iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify({ type, data }), '*');
+    };
+    const markReady = () => { if (!isReady) { isReady = true; h.onReady(); } };
+    const onMsg = e => {
+      if (e.source !== iframe.contentWindow) return;
+      let msg;
+      try { msg = typeof e.data === 'string' ? JSON.parse(e.data) : e.data; } catch { return; }
+      if (!msg || !msg.type) return;
+      const d = msg.data || {};
+      switch (msg.type) {
+        case 'player:ready': markReady(); break;
+        case 'player:currentTime': t = Number(d.time) || 0; tAt = performance.now(); break;
+        case 'player:rollState': inAd = d.state === 'play'; break;
+        case 'player:changeState':
+          if (d.state === 'playing') { playing = true; if (!inAd) h.onPlay(); }
+          else if (d.state === 'pause' || d.state === 'paused') { playing = false; if (!inAd) h.onPause(); }
+          else if (d.state === 'stopped' || d.state === 'completed') { playing = false; h.onEnded(); }
+          break;
+        case 'player:error': h.onError('Rutube не дал включить это видео.'); break;
+      }
+    };
+    window.addEventListener('message', onMsg);
+    iframe.addEventListener('load', () => setTimeout(markReady, 2500)); // на случай, если «ready» не придёт
+    return {
+      time: () => t + (playing && !inAd ? Math.min(2, (performance.now() - tAt) / 1000) : 0),
+      paused: () => !playing,
+      busy: () => inAd,
+      play: () => send('player:play'),
+      pause: () => send('player:pause'),
+      seek: s => { send('player:setCurrentTime', { time: s }); t = s; tAt = performance.now(); },
+      destroy: () => { window.removeEventListener('message', onMsg); try { send('player:remove'); } catch {} }
+    };
+  }
+
+  // ----- VK Видео (экспериментально) -----
+  async function createVK(m, h, key) {
+    await loadScript('https://vk.com/js/api/videoplayer.js', () => window.VK && VK.VideoPlayer);
+    if (key !== current) return null;
+    const iframe = makeIframe(`https://vk.com/video_ext.php?oid=${m.oid}&id=${m.vid}${m.hash ? '&hash=' + m.hash : ''}&js_api=1`);
+    const p = VK.VideoPlayer(iframe);
+    const S = VK.VideoPlayer.States || {}, E = VK.VideoPlayer.Events || {};
+    const PLAYING = S.PLAYING || 'playing', ENDED = S.ENDED || 'ended';
+    let t = 0, tAt = performance.now(), playing = false, isReady = false;
+    if (E.TIMEUPDATE) p.on(E.TIMEUPDATE, st => { if (st && typeof st.time === 'number') { t = st.time; tAt = performance.now(); } });
+    const timer = setInterval(() => {
+      let st;
+      try { st = p.getState(); } catch { return; }
+      if (!st || st === 'uninited') return;
+      if (!isReady) { isReady = true; h.onReady(); }
+      const now = st === PLAYING;
+      if (now !== playing) { playing = now; if (now) h.onPlay(); else if (st === ENDED) h.onEnded(); else h.onPause(); }
+    }, 300);
+    setTimeout(() => {
+      if (!isReady && key === current) h.onError('VK Видео не отвечает. Попробуй вставить вместо ссылки код для встраивания: в VK «Поделиться» → «Экспортировать» → скопируй код целиком.');
+    }, 10000);
+    return {
+      time: () => {
+        try { if (typeof p.getCurrentTime === 'function') { const v = p.getCurrentTime(); if (typeof v === 'number') return v; } } catch {}
+        return t + (playing ? Math.min(2, (performance.now() - tAt) / 1000) : 0);
+      },
+      paused: () => !playing,
+      play: () => p.play(),
+      pause: () => p.pause(),
+      seek: s => { p.seek(s); t = s; tAt = performance.now(); },
+      destroy: () => { clearInterval(timer); try { p.destroy && p.destroy(); } catch {} }
+    };
+  }
+
+  // ---------- Свои действия → всем ----------
+  // Отправляем, только если действие расходится с общим состоянием.
+  // Так плеер не «отвечает эхом» на команды, которые сам получил.
+  function localAction(action) {
+    if (!ready() || !state.media || busy()) return;
+    const t = P.time();
+    if (action === 'play' && state.playing) return;
+    if (action === 'pause' && !state.playing) return;
+    if (action === 'seek' && Math.abs(t - expected()) < 1.5) return;
+    state = { ...state, time: t, updatedAt: serverNow(), playing: action === 'play' ? true : action === 'pause' ? false : state.playing };
+    socket.emit('control', { action, time: t });
+  }
+
+  video.addEventListener('loadedmetadata', () => { if (kind === 'html') { htmlReady = true; syncNow(); } });
+  video.addEventListener('play', () => { if (kind === 'html') { hideTap(); localAction('play'); } });
+  video.addEventListener('pause', () => { if (kind === 'html' && Date.now() - progPlayAt > 1000) localAction('pause'); });
+  video.addEventListener('seeked', () => { if (kind === 'html') localAction('seek'); });
+  video.addEventListener('error', () => { if (kind === 'html' && current && !hls && video.getAttribute('src')) showNotice(BAD_LINK); });
+
+  // Встроенные плееры не сообщают о перемотке — замечаем скачки времени сами
+  setInterval(() => {
+    if (!ready() || kind !== 'ext' || busy()) { lastPoll = null; return; }
+    const t = P.time(), now = performance.now();
+    if (lastPoll) {
+      const shouldBe = lastPoll.t + (P.paused() ? 0 : (now - lastPoll.now) / 1000);
+      if (Math.abs(t - shouldBe) > 2.5) localAction('seek');
+    }
+    lastPoll = { t, now };
+  }, 500);
+
+  // ---------- Общее состояние → мой плеер ----------
+  function applyState(s) {
+    if (!clockMeasured && s.serverNow) offset = s.serverNow - Date.now();
+    state = { media: s.media, playing: s.playing, time: s.time, updatedAt: s.updatedAt };
+    if (mediaKey(s.media) !== current) loadMedia(s.media);
+    else syncNow();
+  }
+
+  function syncNow() {
+    if (!ready() || !state.media || busy()) return;
+    const target = expected();
+    if (Math.abs(P.time() - target) > 1) P.seek(target);
+    if (state.playing && P.paused()) tryPlay();
+    else if (!state.playing && !P.paused()) P.pause();
+    if (!state.playing) P.rate(1);
+  }
+
+  function tryPlay() {
+    progPlayAt = Date.now();
+    const p = P.play();
+    if (kind === 'html') {
+      p.then(hideTap).catch(err => { if (err && err.name === 'NotAllowedError') showTap(); });
+    } else {
+      setTimeout(() => { if (kind === 'ext' && state.playing && P.paused() && !busy()) showTap(); }, 2500);
+    }
+  }
+
+  // Подтягиваем отставание: маленькое — чуть быстрее/медленнее, большое — перемоткой
+  setInterval(() => {
+    if (!ready() || !state.media || !state.playing || P.paused() || busy()) return;
+    const diff = P.time() - expected();
+    if (Math.abs(diff) > (kind === 'html' ? 1.5 : 2.5)) P.seek(expected());
+    else if (kind === 'html') P.rate(Math.abs(diff) > 0.25 ? (diff > 0 ? 0.95 : 1.05) : 1);
+  }, 1000);
+
+  tapBtn.addEventListener('click', () => {
+    hideTap();
+    if (gatedMedia) { const m = gatedMedia; gatedMedia = null; startExt(m); return; }
+    syncNow();
+    if (kind === 'ext') setTimeout(() => {
+      if (state.playing && P.paused()) showNotice('Нажми ▶ прямо на видео, чтобы присоединиться.');
+    }, 1500);
+  });
+
+  // ---------- Ссылки ----------
+  function parseLink(raw) {
+    let s = raw.trim();
+    if (!s) return null;
+    const iframeSrc = s.match(/<iframe[^>]+src=["']([^"']+)["']/i); // вставили код для встраивания
+    if (iframeSrc) s = iframeSrc[1].replace(/&amp;/g, '&');
+    if (s.startsWith('//')) s = 'https:' + s;
+
+    const ytMatch = s.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/)([\w-]{11})/);
+    if (ytMatch) return { type: 'yt', id: ytMatch[1], title: 'видео с YouTube' };
+
+    const rt = s.match(/rutube\.ru\/(?:video|play\/embed|shorts)\/(?:private\/)?([a-f0-9]{32}|\d+)/i);
+    if (rt) {
+      let p = '';
+      try { p = new URL(s).searchParams.get('p') || ''; } catch {}
+      return { type: 'rutube', id: rt[1].toLowerCase(), p, title: 'видео с Rutube' };
+    }
+
+    if (/(vk\.com|vkvideo\.ru|vk\.ru)\//i.test(s)) {
+      let oid, vid, hash = '';
+      try {
+        const u = new URL(s), q = u.searchParams;
+        if (q.get('oid') && q.get('id')) { oid = q.get('oid'); vid = q.get('id'); hash = q.get('hash') || ''; }
+      } catch {}
+      if (!oid) {
+        const vm = s.match(/video(-?\d+)_(\d+)/);
+        if (vm) { oid = vm[1]; vid = vm[2]; }
+      }
+      if (oid && /^-?\d+$/.test(oid) && /^\d+$/.test(vid)) {
+        return { type: 'vk', oid, vid, hash: /^[a-f0-9]+$/i.test(hash) ? hash : '', title: 'видео из VK' };
+      }
+      return null;
+    }
+
+    if (!/^https?:\/\//i.test(s)) return null;
+    let title = 'видео';
+    try {
+      const u = new URL(s);
+      const last = u.pathname.split('/').filter(Boolean).pop();
+      title = last ? decodeURIComponent(last) : u.hostname;
+    } catch {}
+    return { type: /\.m3u8(\?|#|$)/i.test(s) ? 'hls' : 'file', src: s, title: title.slice(0, 80) };
+  }
+
+  loadForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const media = parseLink(linkInput.value);
+    if (!media) { showNotice('Не получилось разобрать ссылку. Нужна ссылка на конкретное видео: YouTube, Rutube, VK Видео или прямая на .mp4 / .m3u8.'); return; }
+    ownLoad = { key: mediaKey(media), at: Date.now() };
+    socket.emit('load', { media });
+    linkInput.value = '';
+    linkInput.blur();
+  });
+
+  fetch('/api/videos').then(r => r.ok ? r.json() : []).then(list => {
+    if (!list.length) return;
+    for (const name of list) {
+      const o = document.createElement('option');
+      o.value = name; o.textContent = name;
+      localSelect.appendChild(o);
+    }
+    localWrap.hidden = false;
+  }).catch(() => {});
+
+  localSelect.addEventListener('change', () => {
+    const name = localSelect.value;
+    if (!name) return;
+    socket.emit('load', { media: { type: 'file', src: '/videos/' + encodeURIComponent(name), title: name } });
+    localSelect.value = '';
+  });
+
+  // ---------- Чат ----------
+  const replyBar = $('replyBar'), replyName = $('replyName'), replyText = $('replyText');
+  let replyTarget = null;
+
+  function startReply(m) {
+    replyTarget = m;
+    replyName.textContent = m.clientId === clientId ? 'Ответ себе' : 'Ответ ' + m.name;
+    replyText.textContent = m.text;
+    replyBar.hidden = false;
+    chatInput.focus();
+  }
+  function cancelReply() { replyTarget = null; replyBar.hidden = true; }
+  $('replyCancel').addEventListener('click', () => { cancelReply(); chatInput.focus(); });
+  chatInput.addEventListener('keydown', e => { if (e.key === 'Escape' && replyTarget) cancelReply(); });
+
+  function jumpTo(id) {
+    const target = messagesEl.querySelector(`[data-id="${id}"]`);
+    if (!target) { showToast('Это сообщение уже не в истории'); return; }
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.remove('flash'); void target.offsetWidth; target.classList.add('flash');
+  }
+
+  // ---------- Реакции и меню сообщения ----------
+  const REACTIONS = ['👌🏻', '👍🏻', '❤️', '😭', '😱', '😋', '😆'];
+  let menuEl = null, backdropEl = null;
+
+  function closeMenu() {
+    if (menuEl) menuEl.remove();
+    if (backdropEl) backdropEl.remove();
+    menuEl = backdropEl = null;
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenu(); });
+
+  function myReaction(m) {
+    for (const [emoji, list] of Object.entries(m.reactions || {})) if (list.some(u => u.clientId === clientId)) return emoji;
+    return null;
+  }
+
+  function openMenu(el, m) {
+    closeMenu();
+    backdropEl = document.createElement('div');
+    backdropEl.className = 'menu-backdrop';
+    backdropEl.addEventListener('click', closeMenu);
+    backdropEl.addEventListener('contextmenu', e => { e.preventDefault(); closeMenu(); });
+    menuEl = document.createElement('div');
+    menuEl.className = 'msg-menu';
+    menuEl.setAttribute('role', 'menu');
+
+    const row = document.createElement('div'); row.className = 'menu-emoji';
+    const mine = myReaction(m);
+    for (const emoji of REACTIONS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = emoji; b.setAttribute('aria-label', 'Реакция ' + emoji);
+      if (emoji === mine) b.classList.add('on');
+      b.addEventListener('click', () => { socket.emit('react', { id: m.id, emoji }); closeMenu(); });
+      row.appendChild(b);
+    }
+    const actions = document.createElement('div'); actions.className = 'menu-actions';
+    const act = (label, fn) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = label;
+      b.addEventListener('click', () => { closeMenu(); fn(); });
+      actions.appendChild(b);
+    };
+    act('↩  Ответить', () => startReply(m));
+    act('⧉  Копировать', async () => {
+      try { await navigator.clipboard.writeText(m.text); showToast('Текст скопирован'); }
+      catch { prompt('Скопируй текст:', m.text); }
+    });
+    menuEl.append(row, actions);
+    document.body.append(backdropEl, menuEl);
+
+    // Ставим меню рядом с сообщением, не вылезая за края экрана
+    const r = el.querySelector('.bubble').getBoundingClientRect(), mr = menuEl.getBoundingClientRect();
+    const vw = innerWidth, vh = innerHeight, pad = 12;
+    let left = el.classList.contains('mine') ? r.right - mr.width : r.left;
+    left = Math.max(pad, Math.min(left, vw - mr.width - pad));
+    let top = r.bottom + 8;
+    if (top + mr.height > vh - pad) top = r.top - mr.height - 8;
+    top = Math.max(pad, top);
+    menuEl.style.left = left + 'px';
+    menuEl.style.top = top + 'px';
+  }
+
+  function renderReactions(el, m) {
+    let box = el.querySelector('.reactions');
+    const entries = Object.entries(m.reactions || {}).filter(([, l]) => l.length);
+    if (!entries.length) { if (box) box.remove(); return; }
+    if (!box) { box = document.createElement('div'); box.className = 'reactions'; el.querySelector('time').before(box); }
+    box.textContent = '';
+    for (const [emoji, list] of entries) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'react-chip' + (list.some(u => u.clientId === clientId) ? ' mine' : '');
+      chip.title = list.map(u => u.name).join(', ');
+      chip.textContent = emoji;
+      if (list.length > 1) { const c = document.createElement('small'); c.textContent = list.length; chip.appendChild(c); }
+      chip.addEventListener('click', e => { e.stopPropagation(); socket.emit('react', { id: m.id, emoji }); });
+      box.appendChild(chip);
+    }
+  }
+
+  const byId = new Map(); // id сообщения → { el, m }
+
+  // Долгое нажатие (iPhone) или правый клик (ноутбук) — меню с реакциями
+  function enableMenu(el, m) {
+    let timer = null, x0 = 0, y0 = 0;
+    const cancel = () => { clearTimeout(timer); timer = null; el.classList.remove('pressed'); };
+    el.addEventListener('touchstart', e => {
+      const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY;
+      el.classList.add('pressed');
+      timer = setTimeout(() => {
+        timer = null; el.classList.remove('pressed');
+        if (navigator.vibrate) navigator.vibrate(15);
+        el.dataset.suppressClick = '1';
+        openMenu(el, m);
+      }, 450);
+    }, { passive: true });
+    el.addEventListener('touchmove', e => {
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - x0) > 8 || Math.abs(t.clientY - y0) > 8) cancel();
+    }, { passive: true });
+    el.addEventListener('touchend', e => {
+      if (el.dataset.suppressClick) { e.preventDefault(); delete el.dataset.suppressClick; }
+      cancel();
+    });
+    el.addEventListener('touchcancel', cancel);
+    el.addEventListener('contextmenu', e => { e.preventDefault(); openMenu(el, m); });
+  }
+
+  // Свайп влево по сообщению — ответить (как в Telegram)
+  function enableSwipe(el, m) {
+    const hint = el.querySelector('.swipe-hint');
+    let x0 = 0, y0 = 0, dx = 0, mode = null; // mode: null | 'swipe' | 'scroll'
+    el.addEventListener('touchstart', e => {
+      const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; dx = 0; mode = null;
+    }, { passive: true });
+    el.addEventListener('touchmove', e => {
+      const t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+      if (!mode) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        mode = mx < 0 && Math.abs(mx) > Math.abs(my) ? 'swipe' : 'scroll';
+        if (mode === 'swipe') el.classList.add('dragging');
+      }
+      if (mode !== 'swipe') return;
+      e.preventDefault();
+      dx = Math.max(-80, Math.min(0, mx));
+      el.style.transform = `translateX(${dx}px)`;
+      const k = Math.min(1, -dx / 60);
+      hint.style.opacity = k;
+      hint.style.transform = `translateY(-50%) scale(${0.6 + 0.4 * k})`;
+    }, { passive: false });
+    const end = () => {
+      if (mode === 'swipe') {
+        el.classList.remove('dragging');
+        el.style.transform = '';
+        hint.style.opacity = 0;
+        if (dx <= -55) { if (navigator.vibrate) navigator.vibrate(10); startReply(m); }
+      }
+      mode = null; dx = 0;
+    };
+    el.addEventListener('touchend', end);
+    el.addEventListener('touchcancel', end);
+  }
+
+  function addMessage(m) {
+    const nearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
+    const el = document.createElement('div');
+    if (m.system) {
+      el.className = 'sys';
+      el.textContent = m.text;
+    } else {
+      const mine = m.clientId === clientId;
+      el.className = 'msg' + (mine ? ' mine' : '');
+      el.dataset.id = m.id;
+      const who = document.createElement('div'); who.className = 'who'; who.textContent = m.name;
+      const bubble = document.createElement('div'); bubble.className = 'bubble';
+      if (m.replyTo) {
+        const q = document.createElement('span'); q.className = 'quote';
+        const qn = document.createElement('b'); qn.textContent = m.replyTo.name;
+        q.append(qn, document.createTextNode(m.replyTo.text));
+        q.addEventListener('click', e => { e.stopPropagation(); jumpTo(m.replyTo.id); });
+        bubble.appendChild(q);
+      }
+      bubble.appendChild(document.createTextNode(m.text));
+      const time = document.createElement('time');
+      time.textContent = new Date(m.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+      const btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'reply-btn'; btn.textContent = '↩'; btn.title = 'Ответить';
+      btn.setAttribute('aria-label', 'Ответить');
+      btn.addEventListener('click', () => startReply(m));
+      const hint = document.createElement('span'); hint.className = 'swipe-hint'; hint.textContent = '↩';
+      el.append(who, bubble, time, btn, hint);
+      el.addEventListener('dblclick', e => { e.preventDefault(); window.getSelection && getSelection().removeAllRanges(); startReply(m); });
+      enableSwipe(el, m);
+      enableMenu(el, m);
+      byId.set(m.id, { el, m });
+      renderReactions(el, m);
+    }
+    messagesEl.appendChild(el);
+    if (nearBottom || m.clientId === clientId) messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  chatForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const text = chatInput.value.trim();
+    if (!text || !socket.connected) return;
+    socket.emit('chat', { text, replyTo: replyTarget ? replyTarget.id : undefined });
+    chatInput.value = '';
+    cancelReply();
+  });
+
+  function renderPeers(list) {
+    avatarsEl.textContent = '';
+    for (const p of list) {
+      const a = document.createElement('div');
+      a.className = 'avatar' + (p.clientId === clientId ? ' me' : '');
+      a.textContent = (p.name || '?').charAt(0).toUpperCase();
+      a.title = p.name;
+      avatarsEl.appendChild(a);
+    }
+    const others = list.filter(p => p.clientId !== clientId);
+    peersText.textContent = others.length ? 'в комнате: ' + others.map(p => p.name).join(', ') : 'ждём второго зрителя';
+  }
+
+  // ---------- Мелочи ----------
+  function fmt(t) {
+    t = Math.max(0, Math.floor(t));
+    const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = t % 60, p = n => String(n).padStart(2, '0');
+    return h ? `${h}:${p(m)}:${p(s)}` : `${m}:${p(s)}`;
+  }
+  // ---------- Во весь экран с чатом ----------
+  const theaterBtn = $('theaterBtn'), chatToggle = $('chatToggle'), unreadEl = $('unread');
+  let theater = false, chatOpen = false, unreadCount = 0, weWentFullscreen = false;
+  const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+
+  function renderUnread() {
+    unreadEl.hidden = !unreadCount;
+    unreadEl.textContent = unreadCount > 9 ? '9+' : unreadCount;
+  }
+  function setChat(open) {
+    chatOpen = open;
+    document.body.classList.toggle('chat-open', open);
+    if (open) {
+      unreadCount = 0; renderUnread();
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (matchMedia('(pointer: fine)').matches) setTimeout(() => chatInput.focus(), 230);
+    } else {
+      chatInput.blur();
+    }
+  }
+  async function enterTheater() {
+    theater = true;
+    document.body.classList.add('theater');
+    theaterBtn.title = theaterBtn.ariaLabel = 'Выйти из полного экрана';
+    $('icoEnter').hidden = true; $('icoExit').hidden = false;
+    const root = document.documentElement;
+    const req = root.requestFullscreen || root.webkitRequestFullscreen; // на iPhone этого нет — тогда просто растягиваем на весь экран
+    if (req) {
+      try { await req.call(root); weWentFullscreen = true; } catch {}
+    }
+    try { if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape'); } catch {}
+  }
+  function exitTheater() {
+    theater = false;
+    document.body.classList.remove('theater');
+    setChat(false);
+    theaterBtn.title = theaterBtn.ariaLabel = 'Во весь экран с чатом';
+    $('icoEnter').hidden = false; $('icoExit').hidden = true;
+    if (weWentFullscreen && fsEl()) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+      if (exit) { const r = exit.call(document); if (r && r.catch) r.catch(() => {}); }
+    }
+    weWentFullscreen = false;
+    try { screen.orientation && screen.orientation.unlock && screen.orientation.unlock(); } catch {}
+  }
+  theaterBtn.addEventListener('click', () => theater ? exitTheater() : enterTheater());
+  chatToggle.addEventListener('click', () => setChat(!chatOpen));
+  $('chatClose').addEventListener('click', () => setChat(false));
+  // Вышли из полного экрана клавишей Esc — выходим и из режима
+  const onFsChange = () => { if (theater && weWentFullscreen && !fsEl()) { weWentFullscreen = false; exitTheater(); } };
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  document.addEventListener('keydown', e => {
+    if (!theater || e.target === chatInput || e.target === linkInput) return;
+    if (e.key === 'c' || e.key === 'с') { e.preventDefault(); setChat(!chatOpen); }
+  });
+
+  let toastTimer;
+  function showToast(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+  function showNotice(t) { noticeEl.textContent = t; noticeEl.hidden = false; }
+  function hideNotice() { noticeEl.hidden = true; }
+  function showTap(text = 'Подключиться к просмотру') { tapBtn.textContent = text; tapBtn.hidden = false; }
+  function hideTap() { tapBtn.hidden = true; }
+
+  function announce(s) {
+    const n = s.byName || 'Кто-то';
+    if (s.action === 'play') showToast(`${n}: воспроизведение`);
+    else if (s.action === 'pause') showToast(`${n}: пауза на ${fmt(s.time)}`);
+    else if (s.action === 'seek') showToast(`${n}: перемотка на ${fmt(s.time)}`);
+  }
+
+  shareBtn.addEventListener('click', async () => {
+    const url = location.href;
+    if (navigator.share && matchMedia('(pointer: coarse)').matches) {
+      try { await navigator.share({ title: 'Смотрим вместе', url }); return; }
+      catch (e) { if (e.name === 'AbortError') return; }
+    }
+    try { await navigator.clipboard.writeText(url); showToast('Ссылка на комнату скопирована'); }
+    catch { prompt('Скопируй ссылку на комнату:', url); }
+  });
+
+  // ---------- Соединение ----------
+  socket.on('connect', () => { socket.emit('join', { roomId, clientId, name: myName }); syncClock(); });
+  socket.on('disconnect', () => showToast('Связь пропала, переподключаемся…'));
+  socket.on('init', ({ state: s, messages }) => {
+    messagesEl.textContent = '';
+    byId.clear();
+    closeMenu();
+    addMessage({ system: true, text: 'Чат видят все, кто в этой комнате.' });
+    messages.forEach(addMessage);
+    applyState(s);
+  });
+  socket.on('state', s => { applyState(s); if (s.by !== clientId) announce(s); });
+  socket.on('chat', m => {
+    addMessage(m);
+    if (theater && !chatOpen && !m.system && m.clientId !== clientId) {
+      unreadCount++; renderUnread();
+      showToast(m.name + ': ' + (m.text.length > 60 ? m.text.slice(0, 60) + '…' : m.text));
+    }
+  });
+  socket.on('reaction', ({ id, reactions }) => {
+    const item = byId.get(id);
+    if (!item) return;
+    item.m.reactions = reactions;
+    renderReactions(item.el, item.m);
+  });
+  socket.on('peers', renderPeers);
+
+  // Окно с именем показываем всегда: нажатие «Войти» разрешает iPhone включать звук
+  nameInput.value = store.get('vdvoem-name') || '';
+  nameModal.hidden = false;
+  setTimeout(() => nameInput.focus(), 50);
+  nameForm.addEventListener('submit', e => {
+    e.preventDefault();
+    myName = nameInput.value.trim().slice(0, 24);
+    if (!myName) return;
+    store.set('vdvoem-name', myName);
+    nameModal.hidden = true;
+    video.play().catch(() => {});
+    socket.connect();
+  });
+})();
+</script>
+</body>
+</html>
